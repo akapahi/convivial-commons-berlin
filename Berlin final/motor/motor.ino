@@ -39,7 +39,7 @@ const uint16_t ARTNET_UNIVERSE = 0;      // matches server universe 0
 const uint16_t MOTOR_CHANNEL = 2;
 
 // Motor driver pins
-const int PWM_PIN = LED_BUILTIN; // or 18
+const int PWM_PIN = 18;
 const int DIR_PIN = 19;
 
 // PWM settings
@@ -222,3 +222,4 @@ void loop() {
 
   delay(1);
 }
+
