@@ -26,14 +26,14 @@ DEFAULT_ACTORS_ORDER = ["rain", "fungi", "bee", "fox", "tree"]
 
 # DMX channels for each actor (1-based)
 ACTOR_CONFIG = {
-    "lake":  {"light_channel": 1,  "motor_channel": 2},
+    "rain":  {"light_channel": 1,  "motor_channel": 2},
     "fungi": {"light_channel": 3,  "motor_channel": 4},
     "bee":   {"light_channel": 5,  "motor_channel": 6},
-    "dog":   {"light_channel": 7,  "motor_channel": 8},
+    "fox":   {"light_channel": 7,  "motor_channel": 8},
     "tree":  {"light_channel": 9,  "motor_channel": 10},
 }
 
-# Timing
+# Timing (mutable via /timing)
 THINKING_TIME = 7.0     # seconds min while "waiting for AI" per actor
 READING_TIME  = 20.0    # seconds after print to let people read
 VOTING_TIME   = 30.0    # seconds to vibrate/light all actors during voting
@@ -332,6 +332,8 @@ def _drama_loop():
       2) Voting dramatization (DMX for all + summary print)
       3) Idle scene
     """
+    global THINKING_TIME, READING_TIME, VOTING_TIME
+
     # ---- DISCUSSION PHASE ----
     with DRAMA_STATE["lock"]:
         actors_order = list(DRAMA_STATE["actors_order"])
@@ -490,6 +492,7 @@ def index():
     - Fetches /proposals
     - Renders one button per proposal
     - On click, calls POST /start with that proposal
+    - Has controls at the bottom to adjust THINKING/READING/VOTING times
     """
     html = """
 <!DOCTYPE html>
@@ -603,6 +606,52 @@ def index():
     }
     .status-ok { color: #8ef59b; }
     .status-error { color: #ff7f7f; }
+
+    .timing-card {
+      margin-top: 24px;
+      padding: 16px;
+      border-radius: 12px;
+      background: #15181f;
+      border: 1px solid #262a33;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .timing-card h2 {
+      font-size: 1rem;
+      margin: 0 0 4px 0;
+    }
+    .timing-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+    }
+    .timing-row label {
+      width: 140px;
+    }
+    .timing-row input[type="number"] {
+      width: 80px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #444a55;
+      background: #0b0c10;
+      color: #f5f5f5;
+    }
+    .timing-row span.unit {
+      font-size: 0.85rem;
+      opacity: 0.7;
+    }
+    .timing-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .timing-note {
+      font-size: 0.75rem;
+      opacity: 0.7;
+    }
   </style>
 </head>
 <body>
@@ -621,11 +670,39 @@ def index():
       <span class="label">Status</span>
       <div id="status-text">Loading proposals…</div>
     </div>
+
+    <div class="timing-card">
+      <h2>Timing Controls</h2>
+      <div class="timing-row">
+        <label for="thinking-input">Thinking time</label>
+        <input id="thinking-input" type="number" min="0" step="1" />
+        <span class="unit">seconds (min before speech prints)</span>
+      </div>
+      <div class="timing-row">
+        <label for="reading-input">Reading time</label>
+        <input id="reading-input" type="number" min="0" step="1" />
+        <span class="unit">seconds (lights stay on after print)</span>
+      </div>
+      <div class="timing-row">
+        <label for="voting-input">Voting time</label>
+        <input id="voting-input" type="number" min="0" step="1" />
+        <span class="unit">seconds (all actors on during voting)</span>
+      </div>
+      <div class="timing-actions">
+        <button id="save-timing-btn">Save timing</button>
+        <span class="timing-note">Changes affect the next run (not the one currently playing).</span>
+      </div>
+    </div>
   </div>
 
   <script>
     const proposalsContainer = document.getElementById("proposals");
     const statusBox = document.getElementById("status-text");
+
+    const thinkingInput = document.getElementById("thinking-input");
+    const readingInput = document.getElementById("reading-input");
+    const votingInput = document.getElementById("voting-input");
+    const saveTimingBtn = document.getElementById("save-timing-btn");
 
     function setStatus(msg, type = "info") {
       statusBox.textContent = msg;
@@ -729,7 +806,68 @@ def index():
       }
     }
 
+    async function loadTiming() {
+      try {
+        const res = await fetch("/timing");
+        if (!res.ok) {
+          throw new Error("HTTP " + res.status);
+        }
+        const data = await res.json();
+        thinkingInput.value = data.thinking_time.toFixed(0);
+        readingInput.value = data.reading_time.toFixed(0);
+        votingInput.value = data.voting_time.toFixed(0);
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to load timing: " + err.message, "error");
+      }
+    }
+
+    async function saveTiming() {
+      const thinking = parseFloat(thinkingInput.value);
+      const reading = parseFloat(readingInput.value);
+      const voting = parseFloat(votingInput.value);
+
+      if (isNaN(thinking) || isNaN(reading) || isNaN(voting)) {
+        setStatus("Please enter valid numbers for timing.", "error");
+        return;
+      }
+      if (thinking < 0 || reading < 0 || voting < 0) {
+        setStatus("Timing values cannot be negative.", "error");
+        return;
+      }
+
+      saveTimingBtn.disabled = true;
+      try {
+        const res = await fetch("/timing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            thinking_time: thinking,
+            reading_time: reading,
+            voting_time: voting
+          })
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          setStatus("Failed to save timing: " + errText, "error");
+          saveTimingBtn.disabled = false;
+          return;
+        }
+        const data = await res.json();
+        console.log("Timing updated:", data);
+        setStatus("Timing updated. New runs will use these values.", "ok");
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to save timing: " + err.message, "error");
+      } finally {
+        saveTimingBtn.disabled = false;
+      }
+    }
+
+    saveTimingBtn.addEventListener("click", saveTiming);
+
     loadProposals();
+    loadTiming();
   </script>
 </body>
 </html>
@@ -745,7 +883,6 @@ def get_proposals():
     try:
         with open(PROPOSALS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # we expect data to be a list; if it's not, still pass it through
         return jsonify(data)
     except FileNotFoundError:
         return jsonify([]), 200
@@ -818,7 +955,7 @@ def actor_vote():
     votes = data.get("votes")
 
     if not isinstance(votes, dict) or not votes:
-        return jsonify({"error": "Field 'votes' must be a non-empty object {actor: vote}"}), 400
+      return jsonify({"error": "Field 'votes' must be a non-empty object {actor: vote}"}), 400
 
     with DRAMA_STATE["lock"]:
         for actor, vote in votes.items():
@@ -858,6 +995,63 @@ def status():
         "actor_data": actor_data_copy,
         "votes": votes_copy,
         "voting_done": voting_done,
+    })
+
+
+@app.route("/timing", methods=["GET", "POST"])
+def timing():
+    """
+    GET  -> return current timing values
+    POST -> update timing values
+      {
+        "thinking_time": <seconds>,
+        "reading_time": <seconds>,
+        "voting_time": <seconds>
+      }
+    """
+    global THINKING_TIME, READING_TIME, VOTING_TIME
+
+    if request.method == "GET":
+        return jsonify({
+            "thinking_time": THINKING_TIME,
+            "reading_time": READING_TIME,
+            "voting_time": VOTING_TIME,
+        })
+
+    # POST
+    data = request.get_json(force=True)
+    thinking = data.get("thinking_time")
+    reading = data.get("reading_time")
+    voting = data.get("voting_time")
+
+    try:
+        if thinking is not None:
+            thinking = float(thinking)
+            if thinking < 0:
+                raise ValueError("thinking_time must be >= 0")
+            THINKING_TIME = thinking
+
+        if reading is not None:
+            reading = float(reading)
+            if reading < 0:
+                raise ValueError("reading_time must be >= 0")
+            READING_TIME = reading
+
+        if voting is not None:
+            voting = float(voting)
+            if voting < 0:
+                raise ValueError("voting_time must be >= 0")
+            VOTING_TIME = voting
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    print(f"[TIMING] Updated: thinking={THINKING_TIME}, reading={READING_TIME}, voting={VOTING_TIME}")
+    return jsonify({
+        "thinking_time": THINKING_TIME,
+        "reading_time": READING_TIME,
+        "voting_time": VOTING_TIME,
+        "status": "updated",
     })
 
 
