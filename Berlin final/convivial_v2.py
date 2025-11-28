@@ -23,10 +23,12 @@ PARTICIPANTS = {
 }
 
 ASSISTANTS = PARTICIPANTS
+
 clerk = "asst_DkQkw8cR4RxcpXHOFvApxnuL"
 
 app = Flask(__name__)
 
+debug = False;
 # Global parliament state
 STATE = {
     "proposal": "",
@@ -40,6 +42,8 @@ STATE = {
 
 # --- Core helpers ---
 def ask_assistant(assistant_id: str, conversation_history: str, name: str) -> str:
+    if debug:
+        return assistant_id + "test message"
     thread = client.beta.threads.create()
     client.beta.threads.messages.create(
         thread_id=thread.id,
@@ -111,6 +115,8 @@ def run_discussion(participants: list):
 # --- Voting round ---
 def run_voting(participants: list):
     """Run a full voting round (AI only)."""
+    votes = STATE["voting"]["votes"]
+
     for name in participants:
         if name == "human":
             continue  # human never votes
@@ -118,29 +124,30 @@ def run_voting(participants: list):
         asst_id = ASSISTANTS[name]
         vote_prompt = (
             STATE["conversation"]
-            + "\nNow cast your vote on the proposal: reply with YES or NO in one short sentence."
+            + "\nNow cast your vote on the proposal: reply with YES or NO in one short sentence strictly no more than 50 words."
         )
         vote_reply = ask_assistant(asst_id, vote_prompt, name)
-        STATE["voting"]["votes"][name] = vote_reply
+        votes[name] = vote_reply
         STATE["conversation"] += f"\n{name} voted:\n{vote_reply}\n"
-
-        # NEW: send vote to dramatization server
-        try:
-            payload = {"actor": name, "vote": vote_reply}
-            requests.post(f"{DRAMA_SERVER_URL}/actor_vote", json=payload, timeout=5)
-        except Exception as e:
-            print(f"[WARN] Failed to send actor_vote to dramatization server for {name}: {e}")
 
     STATE["voting"]["done"] = True
     STATE["phase"] = "voting"
 
-    clerk_summary = send_to_clerk(STATE["conversation"], STATE["voting"]["votes"])
+    # Send all votes to dramatization server in one go
+    try:
+        payload = {"votes": votes}
+        requests.post(f"{DRAMA_SERVER_URL}/actor_vote", json=payload, timeout=5)
+    except Exception as e:
+        print(f"[WARN] Failed to send combined votes to dramatization server: {e}")
+
+    # Ask clerk for summary
+    clerk_summary = send_to_clerk(STATE["conversation"], votes)
 
     return {
         "status": "complete",
         "phase": "voting",
         "responses": STATE["discussion"]["responses"],
-        "votes": STATE["voting"]["votes"],
+        "votes": votes,
         "conversation": STATE["conversation"],
         "clerk_summary": clerk_summary,
     }
@@ -153,7 +160,8 @@ def start_full_parliament(participants: list):
 
     # Voting order = all AIs except proposer + proposer last (if not human)
     voting_participants = [
-        n for n in ASSISTANTS if n != STATE["proposer"] and n != "human"
+        n for n in ASSISTANTS
+        if n != STATE["proposer"] and n != "human"
     ]
     if STATE["proposer"] != "human":
         voting_participants.append(STATE["proposer"])
