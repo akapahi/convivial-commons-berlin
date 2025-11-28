@@ -1,0 +1,45 @@
+[
+    {
+      "title": "Berlin Climate Adaptation Act",
+      "prompt": "I am a human, proposing to fund and implement the \"Berlin Climate Adaptation Act\": Berlin shall fully fund the new Climate Adaptation Act and start work now. By 2040: many more street and park trees, cooler streets through de-sealing and sponge-city measures, heat action plans in every borough, and one clear system to track progress. Boroughs get dedicated budgets for green, water, and shade. The Senate publishes simple annual updates on money and results. Decision: approve or reject.",
+      "proposer": "human",
+      "order": ["rain", "fox", "bee", "fungi", "tree"]
+    },
+    {
+      "title": "Housing on Tempelhofer Feld Edges",
+      "prompt": "This is a human, proposing to develop housing on the edge of \"Tempelhofer Feld\" - in opposition to leaving it 100% free as a park. I propose to start planning to develop selected edges of Tempelhofer Feld. Housing (with a strong share of affordable homes), schools, sports fields, and community spaces will be placed on the south and east edges. Urban designs will also follow low-car mobility and with a focus on green corridors while the center of the Feld is being kept open as a park. Decision: approve to build on the Feld or reject to leave it 100% open.",
+      "proposer": "human",
+      "order": ["fox", "bee", "tree", "fungi", "rain"]
+    },
+    {
+      "title": "Stop A100 Autobahn Extension",
+      "prompt": "I am a human proposing to Stop the A100 Autobahn Extension under Friedrichshain. Berlin stops the plans to extend it as an underground highway under the vivid cultural part of the city. No further planning, no constructions. The budget will be shifted to invest in better public transport and safe cycling: Ringbahn upgrades, new tram lines and a connected bike network. This choice reduces noise and pollution and supports climate goals. Decision: approve or reject.",
+      "proposer": "human",
+      "order": ["bee", "rain", "tree", "fox", "fungi"]
+    },
+    {
+      "title": "Olympics Pre-Check with Public Vote",
+      "prompt": "This is a human from Berlin, proposing \"Olympics Pre-Check with Clear Benefits and a Public Vote.\" Berlin runs a short pre-check for a possible Olympic bid with strict rules: climate-neutral plan, mainly existing or temporary venues, no displacement, full transparency on costs and risks, and a binding citywide referendum before any bid. The pre-check must show clear public benefits: better sports spaces, transport upgrades, and lasting green and public places. If these are not met, the idea stops. Decision: approve or reject.",
+      "proposer": "human",
+      "order": ["fungi", "tree", "fox", "bee", "rain"]
+    },
+    {
+      "title": "Finish Green Corridor Nahraum Bremer Straße",
+      "prompt": "I am a human proposing to finish the Green Corridor ‘Nahraum Bremer Straße’. Berlin funds and finishes the green corridor from Ottopark to ZK/U and Moabiter Stadtgarten. Actions: calmer crossings, more trees, rainwater storage and infiltration, shade, and a simple care system with local partners. We follow the existing concept with a clear timeline and budget. This corridor cools streets, supports walking and cycling, and connects people to the park. Decision: approve or reject.",
+      "proposer": "human",
+      "order": ["tree", "bee", "rain", "fungi", "fox"]
+    },
+    {
+      "title": "Berlin Autofrei Pilot Zone",
+      "prompt": "This is a human from Berlin, proposing \"Berlin Autofrei Pilot Zone in the Inner City.\" Berlin tests a three-year low-car inner-city zone. Only essential vehicles enter (narrow permits for residents, timed deliveries, emergency services, people with disabilities). In parallel: investments in public transport, cycling, safe crossings, and local delivery hubs. A simple dashboard tracks air, noise, safety, and shop activity. At the end, the city decides how to continue. Decision: approve or reject.",
+      "proposer": "human",
+      "order": ["rain", "fungi", "tree", "bee", "fox"]
+    },
+    {
+      "title": "Open More Spree Swimming Spaces",
+      "prompt": "I am a human proposing to open more spaces at the river Spree for swimming. Berlin opens larger sections of the Spree for public swimming, in safe stages. First steps: clean inflows, simple bathing rules, ladders and signs, boat and current management, real-time water checks. Start with one pilot stretch; expand when water is proven safe. Swimming is for people, while protecting fish and river life. Decision: approve or reject.",
+      "proposer": "human",
+      "order": ["fox", "tree", "fungi", "rain", "bee"]
+    }
+  ]
+  
