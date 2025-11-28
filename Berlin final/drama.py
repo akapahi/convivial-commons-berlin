@@ -3,6 +3,8 @@ import threading
 import time
 import requests
 import socket
+import os
+import json
 
 from escpos.printer import Usb
 
@@ -24,17 +26,19 @@ DEFAULT_ACTORS_ORDER = ["rain", "fungi", "bee", "fox", "tree"]
 
 # DMX channels for each actor (1-based)
 ACTOR_CONFIG = {
-    "rain":  {"light_channel": 1,  "motor_channel": 2},
+    "lake":  {"light_channel": 1,  "motor_channel": 2},
     "fungi": {"light_channel": 3,  "motor_channel": 4},
     "bee":   {"light_channel": 5,  "motor_channel": 6},
-    "fox":   {"light_channel": 7,  "motor_channel": 8},
+    "dog":   {"light_channel": 7,  "motor_channel": 8},
     "tree":  {"light_channel": 9,  "motor_channel": 10},
 }
 
-MIN_SLOT_DURATION = 10.0  # seconds per character minimum (used for discussion AND voting)
+# Timing
+THINKING_TIME = 7.0     # seconds min while "waiting for AI" per actor
+READING_TIME  = 20.0    # seconds after print to let people read
+VOTING_TIME   = 30.0    # seconds to vibrate/light all actors during voting
 
 # === THERMAL PRINTER CONFIG (USB ESC/POS) ===
-# Replace these with your printer IDs from `lsusb` on Pi
 PRINTER_VID = 0x0483
 PRINTER_PID = 0x5743
 PRINTER_IN_EP = 0x82   # often 0x82
@@ -44,6 +48,10 @@ PRINTER_OUT_EP = 0x01  # often 0x01
 #   True  = assume Windows (simple Usb(VID, PID))
 #   False = assume Raspberry Pi / Linux (Usb with in_ep / out_ep)
 DEBUG = True
+
+# Path to proposals.json (same folder as this script)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROPOSALS_PATH = os.path.join(BASE_DIR, "proposals.json")
 
 
 # =========================
@@ -221,7 +229,7 @@ class ThermalPrinter:
     def print_text(self, actor, text):
         """
         Print the given actor's text on the thermal printer.
-        'actor' is a label (e.g. "proposal", "lake", "votes", "lake vote").
+        'actor' is a label (e.g. "proposal", "lake", "votes").
         """
         header = f"— {actor.upper()} —\n"
 
@@ -300,31 +308,29 @@ def _set_active_actor_scene(actor):
     dmx.set_channel(motor_ch, 128)
 
 
-def _set_voting_scene(actor):
+def _set_voting_scene_all(actors_order):
     """
-    Voting DMX: slightly different look to signal voting phase.
-    For now: dimmer light, motor lower intensity.
+    Voting DMX: all actors on at once.
     """
     _set_idle_scene()
-    cfg = ACTOR_CONFIG.get(actor)
-    if not cfg:
-        print(f"[WARN] No DMX config for actor {actor} (voting)")
-        return
-    light_ch = cfg["light_channel"]
-    motor_ch = cfg["motor_channel"]
-
-    # e.g. half light, lower motor
-    dmx.set_channel(light_ch, 128)
-    dmx.set_channel(motor_ch, 80)
+    for actor in actors_order:
+        cfg = ACTOR_CONFIG.get(actor)
+        if not cfg:
+            print(f"[WARN] No DMX config for actor {actor} (voting)")
+            continue
+        light_ch = cfg["light_channel"]
+        motor_ch = cfg["motor_channel"]
+        # e.g. half light, lower motor
+        dmx.set_channel(light_ch, 128)
+        dmx.set_channel(motor_ch, 80)
 
 
 def _drama_loop():
     """
     Background thread that runs:
       1) Discussion dramatization (DMX + per-actor speech print)
-      2) Voting dramatization (DMX + per-actor vote print)
-      3) Voting summary print
-      4) Idle scene
+      2) Voting dramatization (DMX for all + summary print)
+      3) Idle scene
     """
     # ---- DISCUSSION PHASE ----
     with DRAMA_STATE["lock"]:
@@ -341,47 +347,50 @@ def _drama_loop():
         print(f"[DRAMA] Discussion slot for actor={actor}")
         _set_active_actor_scene(actor)
 
-        # Wait loop for this actor's discussion slot
+        # THINKING PHASE: wait at least THINKING_TIME seconds AND until text arrives
+        slot_start = time.time()
         while True:
             with DRAMA_STATE["lock"]:
                 actor_entry = DRAMA_STATE["actor_data"][actor]
                 text = actor_entry["text"]
-                start_time = actor_entry["start_time"]
 
-            elapsed = time.time() - start_time if start_time else 0
+            elapsed = time.time() - slot_start
 
-            if text is not None and elapsed >= MIN_SLOT_DURATION:
-                printer.print_text(actor, text)
-                with DRAMA_STATE["lock"]:
-                    DRAMA_STATE["actor_data"][actor]["printed"] = True
-                print(f"[DRAMA] Finished discussion for {actor}, elapsed={elapsed:.1f}s")
+            if text is not None and elapsed >= THINKING_TIME:
                 break
 
-            time.sleep(0.5)
+            time.sleep(0.2)
+
+        # PRINT the text
+        printer.print_text(actor, text)
+        with DRAMA_STATE["lock"]:
+            DRAMA_STATE["actor_data"][actor]["printed"] = True
+        print(f"[DRAMA] Printed discussion for {actor} after {elapsed:.1f}s")
+
+        # READING PHASE: keep scene on for READING_TIME seconds
+        read_start = time.time()
+        while time.time() - read_start < READING_TIME:
+            time.sleep(0.2)
 
     print("[DRAMA] Discussion phase complete. Starting voting dramatization.")
 
-    # ---- VOTING PHASE ----
-    for actor in actors_order:
-        print(f"[DRAMA] Voting slot for actor={actor}")
-        _set_voting_scene(actor)
-        slot_start = time.time()
+    # ---- VOTING PHASE (all actors at once) ----
+    _set_voting_scene_all(actors_order)
 
-        while True:
-            with DRAMA_STATE["lock"]:
-                vote = DRAMA_STATE["votes"].get(actor)
-            elapsed = time.time() - slot_start
+    voting_start = time.time()
+    while True:
+        with DRAMA_STATE["lock"]:
+            have_any_votes = bool(DRAMA_STATE["votes"])
+        elapsed = time.time() - voting_start
 
-            if vote is not None and elapsed >= MIN_SLOT_DURATION:
-                vote_text = f"{actor.upper()}: {vote}"
-                printer.print_text(f"{actor} vote", vote_text)
-                print(f"[DRAMA] Finished voting dramatization for {actor}, elapsed={elapsed:.1f}s")
-                break
+        # We want at least VOTING_TIME seconds AND to have received votes
+        if elapsed >= VOTING_TIME and have_any_votes:
+            break
 
-            time.sleep(0.5)
+        # No timeout: keep waiting as long as needed
+        time.sleep(0.2)
 
-    # ---- SUMMARY + IDLE ----
-    print("[DRAMA] All actors done voting. Printing voting summary and going idle.")
+    print("[DRAMA] Voting time + votes condition met. Printing voting summary.")
 
     with DRAMA_STATE["lock"]:
         votes_copy = dict(DRAMA_STATE["votes"])
@@ -389,15 +398,24 @@ def _drama_loop():
         DRAMA_STATE["current_index"] = -1
         DRAMA_STATE["voting_done"] = True
 
+    # Build and print summary (whatever votes we have)
+    summary_lines = ["VOTING SUMMARY", ""]
     if votes_copy:
-        summary_lines = ["VOTING SUMMARY", ""]
         for actor in actors_order:
             v = votes_copy.get(actor)
             if v is not None:
                 summary_lines.append(f"{actor.upper()}: {v}")
-        summary_text = "\n".join(summary_lines) + "\n"
-        printer.print_text("votes", summary_text)
-        print("[DRAMA] Printed voting summary")
+    else:
+        summary_lines.append("(no votes received)")
+    summary_text = "\n".join(summary_lines) + "\n"
+
+    printer.print_text("votes", summary_text)
+    print("[DRAMA] Printed voting summary")
+
+    # READING PHASE for votes
+    read_start = time.time()
+    while time.time() - read_start < READING_TIME:
+        time.sleep(0.2)
 
     _set_idle_scene()
     print("[DRAMA] Idle scene set.")
@@ -462,7 +480,281 @@ def start_drama_run(prompt, proposer="human", order=None):
 
 
 # =========================
-# HTTP ENDPOINTS
+# FRONTEND ROUTES (UI)
+# =========================
+
+@app.route("/")
+def index():
+    """
+    Simple frontend UI:
+    - Fetches /proposals
+    - Renders one button per proposal
+    - On click, calls POST /start with that proposal
+    """
+    html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Convivial Commons Parliament</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b0c10;
+      color: #f5f5f5;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+    .container {
+      max-width: 900px;
+      width: 100%;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.8rem;
+    }
+    p {
+      line-height: 1.4;
+      color: #c7c7c7;
+    }
+    .proposals-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+    .proposal-card {
+      border-radius: 12px;
+      padding: 16px;
+      background: #15181f;
+      border: 1px solid #262a33;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .proposal-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .proposal-meta {
+      font-size: 0.8rem;
+      opacity: 0.8;
+      margin-bottom: 6px;
+    }
+    .proposal-text {
+      font-size: 0.9rem;
+      max-height: 6rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    button {
+      border-radius: 999px;
+      border: none;
+      padding: 8px 16px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      align-self: flex-start;
+      background: #f5f5f5;
+      color: #111;
+      transition: transform 0.05s ease, box-shadow 0.05s ease, opacity 0.15s;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    }
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+    }
+    button:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+      transform: none;
+      box-shadow: none;
+    }
+    .status {
+      margin-top: 20px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      background: #11141b;
+      border: 1px solid #262a33;
+      white-space: pre-line;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .status span.label {
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      opacity: 0.8;
+    }
+    .status-ok { color: #8ef59b; }
+    .status-error { color: #ff7f7f; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Convivial Commons Parliament</h1>
+    <p>
+      Choose a proposal to trigger a full parliament run on this dramatization server.
+      Each card below comes from <code>proposals.json</code>.
+    </p>
+
+    <div id="proposals" class="proposals-list">
+      <!-- proposals will be injected here -->
+    </div>
+
+    <div id="status" class="status">
+      <span class="label">Status</span>
+      <div id="status-text">Loading proposals…</div>
+    </div>
+  </div>
+
+  <script>
+    const proposalsContainer = document.getElementById("proposals");
+    const statusBox = document.getElementById("status-text");
+
+    function setStatus(msg, type = "info") {
+      statusBox.textContent = msg;
+      statusBox.classList.remove("status-ok", "status-error");
+      if (type === "ok") statusBox.classList.add("status-ok");
+      if (type === "error") statusBox.classList.add("status-error");
+    }
+
+    async function loadProposals() {
+      try {
+        const res = await fetch("/proposals");
+        if (!res.ok) {
+          throw new Error("HTTP " + res.status);
+        }
+        const proposals = await res.json();
+        renderProposals(proposals);
+        setStatus("Loaded " + proposals.length + " proposals. Click one to start.");
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to load proposals: " + err.message, "error");
+      }
+    }
+
+    function renderProposals(proposals) {
+      proposalsContainer.innerHTML = "";
+
+      if (!Array.isArray(proposals) || proposals.length === 0) {
+        proposalsContainer.innerHTML = "<p>No proposals found.</p>";
+        return;
+      }
+
+      proposals.forEach((p, index) => {
+        const card = document.createElement("div");
+        card.className = "proposal-card";
+
+        const title = document.createElement("div");
+        title.className = "proposal-title";
+        title.textContent = p.title || ("Proposal " + (index + 1));
+
+        const meta = document.createElement("div");
+        meta.className = "proposal-meta";
+        const proposer = p.proposer || "human";
+        const order = Array.isArray(p.order) ? p.order.join(", ") : "(default order)";
+        meta.textContent = "Proposer: " + proposer + " • Order: " + order;
+
+        const text = document.createElement("div");
+        text.className = "proposal-text";
+        text.textContent = p.prompt || "";
+
+        const btn = document.createElement("button");
+        btn.textContent = "Start Parliament";
+        btn.addEventListener("click", () => {
+          triggerParliament(p, btn);
+        });
+
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.appendChild(text);
+        card.appendChild(btn);
+        proposalsContainer.appendChild(card);
+      });
+    }
+
+    async function triggerParliament(proposal, buttonEl) {
+      const payload = {
+        prompt: proposal.prompt,
+        proposer: proposal.proposer || "human",
+        order: proposal.order || undefined,
+      };
+
+      if (!payload.prompt) {
+        setStatus("Selected proposal has no prompt text.", "error");
+        return;
+      }
+
+      const label = proposal.title || (payload.prompt.slice(0, 40) + "…");
+      setStatus("Starting parliament for: " + label);
+      buttonEl.disabled = true;
+
+      try {
+        const res = await fetch("/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          setStatus("Server returned " + res.status + ": " + errText, "error");
+          buttonEl.disabled = false;
+          return;
+        }
+
+        const data = await res.json();
+        console.log("Drama /start response:", data);
+        setStatus("Parliament started. Check lights, motors, and printer. :)", "ok");
+      } catch (err) {
+        console.error(err);
+        setStatus("Failed to contact server: " + err.message, "error");
+        buttonEl.disabled = false;
+      }
+    }
+
+    loadProposals();
+  </script>
+</body>
+</html>
+    """
+    return html, 200, {"Content-Type": "text/html"}
+
+
+@app.route("/proposals", methods=["GET"])
+def get_proposals():
+    """
+    Return the proposals loaded from proposals.json as JSON array.
+    """
+    try:
+        with open(PROPOSALS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # we expect data to be a list; if it's not, still pass it through
+        return jsonify(data)
+    except FileNotFoundError:
+        return jsonify([]), 200
+    except Exception as e:
+        return jsonify({"error": f"Could not read proposals.json: {e}"}), 500
+
+
+# =========================
+# API ENDPOINTS (CONTROL)
 # =========================
 
 @app.route("/start", methods=["POST"])
@@ -485,6 +777,13 @@ def start_endpoint():
 
 @app.route("/actor_text", methods=["POST"])
 def actor_text():
+    """
+    Called by AI server during discussion, one actor at a time:
+    {
+      "actor": "lake",
+      "text": "..."
+    }
+    """
     data = request.get_json(force=True)
     actor = data.get("actor")
     text = data.get("text")
@@ -503,16 +802,28 @@ def actor_text():
 
 @app.route("/actor_vote", methods=["POST"])
 def actor_vote():
-    data = request.get_json(force=True)
-    actor = data.get("actor")
-    vote = data.get("vote")
+    """
+    AI server sends ALL votes at once after voting is done.
 
-    if not actor or vote is None:
-        return jsonify({"error": "Both 'actor' and 'vote' required"}), 400
+    Expected body:
+    {
+      "votes": {
+        "lake": "YES ...",
+        "fungi": "NO ...",
+        ...
+      }
+    }
+    """
+    data = request.get_json(force=True)
+    votes = data.get("votes")
+
+    if not isinstance(votes, dict) or not votes:
+        return jsonify({"error": "Field 'votes' must be a non-empty object {actor: vote}"}), 400
 
     with DRAMA_STATE["lock"]:
-        DRAMA_STATE["votes"][actor] = vote
-        print(f"[DRAMA] Received vote: {actor} -> {vote}")
+        for actor, vote in votes.items():
+            DRAMA_STATE["votes"][actor] = vote
+            print(f"[DRAMA] Stored vote: {actor} -> {vote}")
 
     return jsonify({"status": "ok"})
 
