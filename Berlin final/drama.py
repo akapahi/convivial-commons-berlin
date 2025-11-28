@@ -22,14 +22,14 @@ DMX_UNIVERSE_SIZE = 512
 DMX_FPS = 30  # how often to send Art-Net frames
 
 # Default order of characters (can be overridden by /start payload)
-DEFAULT_ACTORS_ORDER = ["rain", "fungi", "bee", "fox", "tree"]
+DEFAULT_ACTORS_ORDER = ["lake", "fungi", "bee", "dog", "tree"]
 
 # DMX channels for each actor (1-based)
 ACTOR_CONFIG = {
-    "rain":  {"light_channel": 1,  "motor_channel": 2},
+    "lake":  {"light_channel": 1,  "motor_channel": 2},
     "fungi": {"light_channel": 3,  "motor_channel": 4},
     "bee":   {"light_channel": 5,  "motor_channel": 6},
-    "fox":   {"light_channel": 7,  "motor_channel": 8},
+    "dog":   {"light_channel": 7,  "motor_channel": 8},
     "tree":  {"light_channel": 9,  "motor_channel": 10},
 }
 
@@ -246,6 +246,25 @@ class ThermalPrinter:
             print(f"[PRINTER] Printed for {actor}")
         except Exception as e:
             print("[PRINTER][ERROR] Failed during print:", e)
+            self.printer = None
+
+    def print_qr_url(self, url, label="SCAN TO OPEN PARLIAMENT UI"):
+        """
+        Print a QR code for the given URL plus the URL as text.
+        """
+        if not self._ensure_printer():
+            print("[PRINTER][FALLBACK][QR]", url)
+            return
+
+        try:
+            self.printer.text("\n" + label + "\n\n")
+            # python-escpos QR method; 'qr' is the common name
+            self.printer.qr(url, size=6)
+            self.printer.text("\n" + url + "\n\n")
+            self.printer.cut()
+            print(f"[PRINTER] Printed QR for URL: {url}")
+        except Exception as e:
+            print("[PRINTER][ERROR] Failed during QR print:", e)
             self.printer = None
 
 
@@ -488,14 +507,13 @@ def start_drama_run(prompt, proposer="human", order=None):
 @app.route("/")
 def index():
     """
-    Simple frontend UI:
+    Frontend UI:
     - Fetches /proposals
     - Renders one button per proposal
     - On click, calls POST /start with that proposal
     - Has controls at the bottom to adjust THINKING/READING/VOTING times
     """
-    html = """
-<!DOCTYPE html>
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -870,8 +888,7 @@ def index():
     loadTiming();
   </script>
 </body>
-</html>
-    """
+</html>"""
     return html, 200, {"Content-Type": "text/html"}
 
 
@@ -955,7 +972,7 @@ def actor_vote():
     votes = data.get("votes")
 
     if not isinstance(votes, dict) or not votes:
-      return jsonify({"error": "Field 'votes' must be a non-empty object {actor: vote}"}), 400
+        return jsonify({"error": "Field 'votes' must be a non-empty object {actor: vote}"}), 400
 
     with DRAMA_STATE["lock"]:
         for actor, vote in votes.items():
@@ -1062,6 +1079,15 @@ def ping():
 
 if __name__ == "__main__":
     try:
+        # On startup, print QR code for the UI URL
+        ip = get_local_ip()
+        url = f"http://{ip}:8001/"
+        print(f"[QR] UI URL: {url}")
+        try:
+            printer.print_qr_url(url)
+        except Exception as e:
+            print("[QR][ERROR] Could not print QR:", e)
+
         app.run(host="0.0.0.0", port=8001, debug=True)
     finally:
         dmx.stop()
